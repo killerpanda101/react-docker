@@ -1,0 +1,21 @@
+sudo: required
+services:
+  - docker
+
+before_install:
+  - docker build -t parijat/react-test -f ./client/Dockerfile.dev ./client
+
+script: 
+  - docker run -e CI=true parijat/react-test npm test
+
+after_success: 
+  - docker build -t parijat69/multi-client ./client 
+  - docker build -t parijat69/multi-nginx ./nginx
+  - docker build -t parijat69/multi-server ./server
+  - docker build -t parijat69/multi-worker ./worker
+  # push the images to the docker hub
+  - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_ID" --password-stdin
+  - docker push parijat69/multi-client
+  - docker push parijat69/multi-nginx
+  - docker push parijat69/multi-server
+  - docker push parijat69/multi-worker
