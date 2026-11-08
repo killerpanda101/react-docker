@@ -14,6 +14,11 @@ function fib(index) {
 }
 
 sub.on('message', (channel, message) => {
-  redisClient.hset('values', message, fib(parseInt(message)));
+  // Only compute for small non-negative integers: fib() is exponential and
+  // runs synchronously, so unchecked input could pin the CPU.
+  if (!/^\d+$/.test(message) || parseInt(message, 10) > 40) {
+    return;
+  }
+  redisClient.hset('values', message, fib(parseInt(message, 10)));
 });
 sub.subscribe('insert');
