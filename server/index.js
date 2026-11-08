@@ -2,12 +2,16 @@ const keys = require('./keys');
 
 // Express App Setup
 const express = require('express');
-const bodyParser = require('body-parser');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
-app.use(bodyParser.json());
+app.disable('x-powered-by');
+// The app is served same-origin through nginx, so CORS is off unless an
+// explicit origin is configured.
+if (process.env.CORS_ORIGIN) {
+  app.use(cors({ origin: process.env.CORS_ORIGIN }));
+}
+app.use(express.json({ limit: '10kb' }));
 
 // Postgres Client Setup
 const { Pool } = require('pg');
@@ -40,29 +44,55 @@ app.get('/', (req, res) => {
 });
 
 app.get('/values/all', async (req, res) => {
-  const values = await pgClient.query('SELECT * from values');
-
-  res.send(values.rows);
+  try {
+    const values = await pgClient.query('SELECT * from values');
+    res.send(values.rows);
+  } catch (err) {
+    console.log(err);
+    res.status(500).send('Internal error');
+  }
 });
 
-app.get('/values/current', async (req, res) => {
+app.get('/values/current', (req, res) => {
   redisClient.hgetall('values', (err, values) => {
-    res.send(values);
+    if (err) {
+      console.log(err);
+      return res.status(500).send('Internal error');
+    }
+    res.send(values || {});
   });
 });
 
 app.post('/values', async (req, res) => {
-  const index = req.body.index;
+  const raw = req.body && req.body.index;
+  const index = typeof raw === 'string' && /^\d+$/.test(raw.trim())
+    ? parseInt(raw, 10)
+    : raw;
 
-  if (parseInt(index) > 40) {
+  if (!Number.isInteger(index) || index < 0) {
+    return res.status(400).send('Index must be a non-negative integer');
+  }
+
+  if (index > 40) {
     return res.status(422).send('Index too high');
   }
 
+  try {
+    await pgClient.query('INSERT INTO values(number) VALUES($1)', [index]);
+  } catch (err) {
+    console.log(err);
+    return res.status(500).send('Internal error');
+  }
+
   redisClient.hset('values', index, 'Nothing yet!');
-  redisPublisher.publish('insert', index);
-  pgClient.query('INSERT INTO values(number) VALUES($1)', [index]);
+  redisPublisher.publish('insert', String(index));
 
   res.send({ working: true });
+});
+
+// Last-resort error handler (e.g. malformed JSON bodies)
+app.use((err, req, res, next) => {
+  res.status(err.status || 500).send('Bad request');
 });
 
 app.listen(5000, err => {
